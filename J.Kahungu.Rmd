@@ -1,0 +1,603 @@
+---
+title: "CEMA-INTERNSHIP DATA SCIENCE"
+author: "Jackson Kahungu"
+date: "2025-04-29"
+output:
+  html_document: default
+---
+
+
+---
+INTRODUCTION
+---
+
+
+HIV continues to devastate communities across Africa, especially in sub-Saharan regions, where the epidemic hits hardest. By tracking how HIV affects populations over time, we can better understand its spread, direct lifesaving resources where they’re needed most, and craft policies that make a real difference. But HIV isn’t just a health issue—it’s deeply tied to poverty, unemployment, and inequality, trapping many in cycles of hardship.
+
+This analysis tackles two key challenges:
+
+1. HIV Trends and Poverty
+Where is HIV hitting hardest? I will explore trends in the countries that bear 75% of the global burden, both worldwide and within each WHO region.
+
+How does poverty shape—and get shaped by—HIV? By combining WHO data with the World Bank’s multidimensional poverty index,I will uncover hidden connections using statistical modeling.
+
+2. Child Mortality in East Africa
+How are children under five, and newborns, faring in the eight East African Community (EAC) nations?
+
+l will map the latest estimates to see where help is most urgent and track changes over time to spot which countries face the steepest struggles.
+
+By digging into these questions, I aim to turn data into action—helping policymakers, healthcare workers, and communities fight back more effectively.
+
+---
+QUESTION 1
+---
+
+
+```{r}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 7,    
+  fig.height = 5,   
+  out.width = "100%",
+  dpi = 300        
+)
+# Loading required libraries
+library(tidyverse)
+library(scales)
+library(sf)
+library(geodata)
+library(tmap)
+library(patchwork)
+
+```
+
+----
+1. HIV Trends and Poverty Analysis
+----
+
+1.1 Data Loading and Cleaning
+
+```{r}
+# Loading HIV data 
+hiv_raw <- read.csv(file.choose())
+
+# Initial exploration
+#head(hiv_data)
+#tail(hiv_data)
+#str(hiv_data)
+#summary(hiv_data)
+#colSums(is.na(hiv_data))
+
+# Cleaning and extract numeric estimates and bounds
+hiv_clean <- hiv_raw %>%
+  # Removing both spaces and commas from Value
+  mutate(
+    val_stripped = str_remove_all(Value, "[, ]"),
+    estimate    = as.numeric(str_extract(val_stripped, "^[0-9]+")),
+    lower_bound = as.numeric(str_extract(val_stripped, "(?<=\\[)[0-9]+")),
+    upper_bound = as.numeric(str_extract(val_stripped, "(?<=-)[0-9]+(?=\\])")),
+    year        = as.integer(Period),
+    region_code = ParentLocationCode  
+  ) %>%
+  select(
+    country         = Location,
+    region_code,
+    year,
+    estimate,
+    lower_bound,
+    upper_bound
+  )
+```
+
+-----
+1.2 Countries Contributing 75% of Global HIV Burden
+-----
+
+```{r}
+library(ggplot2)
+library(scales)   
+library(forcats)   
+
+# Identifying top 75% burden countries
+top_countries <- hiv_clean %>%
+  group_by(country) %>%
+  summarise(total = sum(estimate, na.rm = TRUE)) %>%
+  arrange(desc(total)) %>%
+  mutate(
+    pct     = total / sum(total),
+    cum_pct = cumsum(pct)
+  ) %>%
+  filter(cum_pct <= 0.75) %>%
+  pull(country)
+
+# Prepare plot data
+plot_data <- hiv_clean %>%
+  filter(country %in% top_countries) %>%
+  mutate(country = fct_reorder(country, estimate, .fun = max, .desc = TRUE))
+
+
+trend_plot <- ggplot(plot_data, aes(x = year, y = estimate, colour = country)) +
+  geom_line(size = 1, na.rm = TRUE) +
+  geom_point(size = 2, na.rm = TRUE) +
+  scale_y_continuous(labels = comma) +
+  scale_x_continuous(breaks = pretty_breaks()) +
+  labs(
+    title = "Trend of People Living with HIV (Top 75% Burden Countries)",
+    x = "Year",
+    y = "Number of People",
+    colour = "Country"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 8),
+    plot.title = element_text(size = 12)
+  ) +
+  guides(color = guide_legend(nrow = 3))
+
+
+print(trend_plot)
+
+# Saving as PNG 
+ggsave(
+  filename = "Top75_Burden_Countries_HIV_trend.png",  
+  plot     = trend_plot,    
+  width    = 10,             
+  height   = 8,              
+  dpi      = 300             
+)
+
+```
+
+This graph highlights the countries carrying the heaviest HIV burden worldwide, with a clear focus on Sub-Saharan Africa, where the epidemic remains most severe. South Africa and Nigeria stand out with the highest numbers, reflecting both large populations and ongoing transmission challenges. Neighboring countries like Mozambique, Kenya, and Uganda also show significant caseloads, though at slightly lower levels. Outside Africa, Brazil and Thailand appear as key comparators—regions with concentrated epidemics but different healthcare responses. The data likely reflects the year 2020, meaning it captures early COVID-19 disruptions to testing and treatment programs. The graph underscores how HIV remains a critical public health issue, particularly in high-burden countries where prevention and care efforts must stay a priority.
+
+-----
+1.3 Regional Trends within WHO Regions
+-----
+
+```{r}
+library(dplyr)
+# === 4. Regional 75% contributors per WHO region ===
+regional_contribs <- hiv_clean %>%
+  group_by(region_code, country) %>%
+  summarise(total_est = sum(estimate, na.rm = TRUE), .groups = "drop_last") %>%
+  mutate(
+    region_total = sum(total_est, na.rm = TRUE),
+    contribution = total_est / region_total
+  ) %>%
+  arrange(region_code, desc(contribution)) %>%
+  group_by(region_code) %>%
+  mutate(cum_contrib = cumsum(contribution)) %>%
+  filter(cum_contrib <= 0.75) %>%
+  pull(country)
+
+# Plot by region
+# Modified HIV Regional Trends Plot
+plot_region <- hiv_clean %>%
+  filter(country %in% regional_contribs) %>%
+  ggplot(aes(x = year, y = estimate, color = country)) +
+  geom_line(size = 1, na.rm = TRUE) +
+  geom_point(size = 1.5, na.rm = TRUE) +
+  facet_wrap(~ region_code, scales = "free_y", ncol = 3) +
+  scale_y_continuous(labels = comma) +
+  scale_x_continuous(breaks = pretty_breaks()) +
+  labs(
+    title = "HIV Trends for Top 75% Contributors by WHO Region",
+    x = "Year", 
+    y = "People Living with HIV",
+    color = "Country"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.box = "vertical",
+    legend.margin = margin(t = -20), 
+    legend.text = element_text(size = 6),
+    legend.title = element_text(size = 8),
+    legend.key.size = unit(0.3, "cm"),
+    strip.text = element_text(size = 8),
+    plot.margin = margin(0.5, 0.5, 0.5, 0.5, "cm"),
+    panel.spacing = unit(1, "lines")
+  ) +
+  guides(
+    color = guide_legend(
+      ncol = 4, 
+      title.position = "top",
+      title.hjust = 0.5
+    )
+  )
+print(plot_region)
+
+ggsave(
+  filename = "HIV Trends for Top 75% Contributors by WHO Region.png",  
+  plot     = plot_region,    
+  width    = 10,             
+  height   = 8,              
+  dpi      = 300             
+)
+
+```
+
+This image gives us a snapshot of how the number of people living with HIV has trended since the year 2000, broken down by different regions defined by the World Health Organization (WHO). Each of the six smaller graphs focuses on a specific region – AFR (Africa), AMR (Americas), EMR (Eastern Mediterranean), EUR (Europe), SEAR (South-East Asia), and WPR (Western Pacific). Within each regional graph, you see lines representing the countries that contribute to the top 75% of the total number of people living with HIV in that particular region. The y-axis shows the number of people living with HIV, while the x-axis tracks the years. By looking at the slopes of these lines, we can see whether the number of people living with HIV has been increasing, decreasing, or staying relatively stable in these key contributing countries within each WHO region over the past couple of decades.
+
+-----
+1.4 Merging with Multidimensional Poverty Data
+-----
+
+```{r}
+library(readxl)
+library(dplyr)
+library(janitor)
+library(stringr)
+library(tidyr)
+
+# === 5. Load & clean multidimensional poverty data ===
+poverty_raw <- read_excel(
+  file.choose(),
+  skip = 2,
+  .name_repair = "minimal"
+)
+
+# Inspect the raw names before renaming
+print(colnames(poverty_raw))
+
+poverty_data <- poverty_raw %>%
+  clean_names() %>%
+  rename_with(~ c(
+    "region", "country_code", "country",
+    "reporting_year", "survey_name", "survey_year",
+    "survey_coverage", "welfare_type", "survey_comparability",
+    "monetary_poverty", "education_attainment",
+    "education_enrollment", "electricity_access",
+    "sanitation", "drinking_water", "multidimensional_poverty"
+  )[seq_along(.)]) %>%
+  mutate(
+    reporting_year = as.integer(reporting_year),
+    survey_year = as.integer(survey_year),
+    across(
+      monetary_poverty:multidimensional_poverty,
+      ~ as.numeric(str_remove_all(as.character(.), "[^0-9\\.]"))
+    )
+  )
+
+```
+
+------
+1.5 Exploring the Relationship (Mixed-Effects Model)
+------
+
+```{r}
+library(lme4)
+library(tidyverse) # Loads dplyr, tidyr, etc.
+
+
+# DATA CLEANING
+# Clean HIV data
+hiv_data <- hiv_raw %>%
+  # Standardize column names
+  clean_names() %>%
+  # Rename key columns
+  rename(
+    estimate = value,
+    country = location,
+    year = period
+  ) %>%
+  # Changing data types
+  mutate(
+    # Extracting numbers and converting to numeric
+    estimate = as.numeric(gsub("[^0-9.]", "", estimate)),
+    # Converting year to integer
+    year = as.integer(year)
+  )
+
+# Merging with poverty data
+merged_df <- left_join(
+  hiv_data, 
+  poverty_data, 
+  by = c("country", "year" = "reporting_year")
+)
+
+
+# DATA DIAGNOSTICS
+
+# Filter complete cases
+merged_df_clean <- merged_df %>%
+  filter(
+    !is.na(estimate), 
+    !is.na(multidimensional_poverty)
+  )
+
+# Print data structure
+cat("\nDATA STRUCTURE:\n")
+cat("Total observations:", nrow(merged_df_clean), "\n")
+cat("Unique countries:", length(unique(merged_df_clean$country)), "\n")
+cat("Unique years:", length(unique(merged_df_clean$year)), "\n")
+
+# Show sample data
+cat("\nSAMPLE DATA:\n")
+head(merged_df_clean[, c("country", "year", "estimate", "multidimensional_poverty")])
+
+# MODEL FITTING
+
+test_model <- lmer(
+  estimate ~ multidimensional_poverty + (1 | year),
+  data = merged_df_clean
+)
+
+
+# MODEL OUTPUT
+
+cat("\nMODEL SUMMARY:\n")
+summary(test_model)
+
+#Checking model assumptions
+if (FALSE) 
+  plot(test_model)           
+  qqnorm(resid(test_model))  
+```
+
+The analysis found no clear evidence that poverty levels directly affect HIV rates across countries. While the numbers showed a slight tendency for higher HIV cases in poorer nations, this connection wasn't strong enough to be statistically meaningful. The model also struggled because HIV case numbers varied extremely between countries - from very few to extremely high - making reliable comparisons difficult. Additionally, with only three years of data (2010-2015), the analysis couldn't properly account for changes over time. These limitations mean we can't confidently conclude that poverty causes higher HIV rates from this particular study. The results suggest we may need better data or different methods to properly examine this relationship.
+
+
+-----
+QUESTION 2
+-----
+
+
+1. LOAD AND CLEAN DATA
+
+```{r}
+ 
+# Loading poverty data 
+mortality_data <- read.csv(file.choose())  
+
+# Cleaning data
+clean_data <- mortality_data %>%
+  # Standardizing country names
+  mutate(Geographic.area = case_when(
+    grepl("Tanzania", Geographic.area, ignore.case = TRUE) ~ "Tanzania",
+    grepl("DRC|Congo, Dem|Democratic Republic", Geographic.area) ~ "Democratic Republic of the Congo",
+    TRUE ~ Geographic.area
+  )) %>%
+  
+  filter(Geographic.area %in% c(
+    "Burundi", "Democratic Republic of the Congo",
+    "Kenya", "Rwanda", "South Sudan",
+    "Tanzania", "Uganda", "Somalia"
+  )) %>%
+  
+  filter(Observation.Value >= 0)
+```
+----
+2. LOAD AND PREPARE SHAPEFILES
+----
+```{r}
+library(sf)
+library(geodata)
+
+# Downloading country boundaries
+eac_shapes <- gadm(
+  country = c("BDI", "COD", "KEN", "RWA", "SSD", "TZA", "UGA", "SOM"),
+  level = 0,
+  path = tempdir()
+) %>% 
+  st_as_sf() %>%
+  rename(Geographic.area = COUNTRY) 
+###
+map_outline <- ggplot(eac_shapes) +
+  geom_sf(fill = NA,       
+          color = "black", 
+          size  = 0.4) +   
+  theme_void()             
+
+print(map_outline)
+
+# Save to PNG
+ggsave(
+  filename = "EAC_shapes_outline.png",
+  plot     = map_outline,
+  width    = 8,    
+  height   = 6,   
+  dpi      = 300
+)
+
+# Check your working directory
+message("Saved to: ", getwd(), "/EAC_shapes_outline.png")
+
+```
+
+-----
+3. CREATING MAPS-STATIC
+-----
+
+
+```{r}
+
+
+# FINAL WORKING CODE
+library(tmap)
+library(sf)
+library(dplyr)
+
+# 1. Prepare data with explicit facet labels
+map_data <- clean_data %>%
+  mutate(Year = floor(Reference.Date)) %>%
+  filter(Year >= 2000, Year <= 2023) %>%
+  group_by(Geographic.area, Indicator) %>%
+  filter(Year == max(Year)) %>%
+  left_join(eac_shapes, by = "Geographic.area") %>%
+  st_as_sf() %>%
+  mutate(
+    Facet_Label = paste(Indicator, "in", Year)  # Create combined label
+  )
+
+# 2. Create visualization with single facet dimension
+mortality_map <- tm_shape(map_data) +
+  tm_polygons(
+    fill = "Observation.Value",
+    fill.scale = tm_scale_continuous(
+      values = "viridis",
+      n = 6
+    ),
+    fill.legend = tm_legend(
+      title = "Deaths per 1,000",
+      breaks = c(20, 40, 60, 80, 100, 120)
+    ),
+    col = "white",
+    lwd = 0.5
+  ) +
+  tm_facets(
+    by = "Facet_Label", 
+    ncol = 2,
+    free.coords = FALSE
+  ) +
+  tm_title("Child Mortality in East Africa (2000-2023)") +
+  tm_layout(
+    legend.outside = TRUE,
+    legend.outside.position = "right",
+    panel.label.bg.color = "white"
+  ) +
+  tm_credits("Data Source: UN IGME\nLatest available year between 2000-2023",
+            position = c("left", "bottom"))
+
+# 3. Save and display
+print(mortality_map)
+tmap_save(mortality_map, "combined_mortality_map.png", 
+         width = 14, height = 10, dpi = 300)
+```
+
+
+This Map shows a simple breakdown of child mortality data from 2000- 2023, split into two categories: newborns (neonatal) and children under five. The source, UNIQME, notes that the numbers reflect the most recent estimates between 2020 and 2023. Below the titles, there’s a simple checklist-style scale grouping mortality rates into seven ranges—from the lowest (0–20 deaths per 1,000 births) to the highest (120–140). The layout is minimal, with clear labels and empty check boxes, likely meant to represent tiers of severity or progress. 
+
+-----
+4.TREND ANALYSIS
+-----
+
+```{r}
+library(tmap)
+library(patchwork)
+
+
+#data structure
+str(clean_data)
+summary(clean_data)
+
+#indicators
+unique(clean_data$Indicator)
+
+# date range
+range(clean_data$Reference.Date, na.rm = TRUE)
+
+# Checking country coverage
+unique(clean_data$Geographic.area)
+
+# Sample of mortality values
+clean_data %>%
+  group_by(Indicator) %>%
+  summarise(
+    min_value = min(Observation.Value, na.rm = TRUE),
+    max_value = max(Observation.Value, na.rm = TRUE),
+    avg_value = mean(Observation.Value, na.rm = TRUE)
+  )
+
+
+# Trend Analysis 
+
+# Calculating annual averages for each indicator
+trend_data <- clean_data %>%
+  group_by(Reference.Date, Indicator) %>%
+  summarise(
+    avg_mortality = mean(Observation.Value, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  mutate(Reference.Date = as.numeric(Reference.Date)) 
+
+```
+
+-----
+5.TREND PLOTS
+-----
+
+```{r}
+clean_data <- clean_data %>%
+  mutate(Reference.Date = as.numeric(Reference.Date))  
+
+# 1. Under-Five Mortality Trend Plot
+under5_plot <- ggplot(clean_data %>% filter(Indicator == "Under-five mortality rate"), 
+                      aes(x = Reference.Date, y = Observation.Value)) +
+  geom_line(aes(group = Geographic.area, color = Geographic.area), 
+            alpha = 0.5, linewidth = 0.7) +
+  geom_point(aes(color = Geographic.area), alpha = 0.7, size = 1.5) +
+  geom_smooth(aes(group = 1), method = "loess", color = "black", 
+              se = FALSE, linewidth = 1.5) +
+  scale_color_viridis_d() +
+  labs(title = "Under-Five Mortality Trends by Country (1951-2023)",
+       x = "Year",
+       y = "Mortality Rate (per 1,000 live births)",
+       color = "Country") +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  guides(color = guide_legend(nrow = 2))
+
+# 2. Neonatal Mortality Trend Plot
+neonatal_plot <- ggplot(clean_data %>% filter(Indicator == "Neonatal mortality rate"), 
+                        aes(x = Reference.Date, y = Observation.Value)) +
+  geom_line(aes(group = Geographic.area, color = Geographic.area), 
+            alpha = 0.5, linewidth = 0.7) +
+  geom_point(aes(color = Geographic.area), alpha = 0.7, size = 1.5) +
+  geom_smooth(aes(group = 1), method = "loess", color = "black", 
+              se = FALSE, linewidth = 1.5) +
+  scale_color_viridis_d() +
+  labs(title = "Neonatal Mortality Trends by Country (1951-2023)",
+       x = "Year",
+       y = "Mortality Rate (per 1,000 live births)",
+       color = "Country") +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  guides(color = guide_legend(nrow = 2))
+
+# Combine plots
+combined_trends <- under5_plot / neonatal_plot +
+  plot_annotation(title = "Child Mortality Trends in East African Community",
+                  subtitle = "With country-specific trajectories and regional trend line (black)")
+
+# Display the plot
+print(combined_trends)
+ggsave("trend_map_EAC.png", plot = combined_trends, width = 10, height = 8, dpi = 300)
+```
+
+```{r}
+under5_plot
+```
+
+```{r}
+neonatal_plot
+```
+
+The two trend lines illustrates child mortality trends within the East African Community from 1951 to 2023. The top graph focuses on under-five mortality rates (per 1,000 live births), while the bottom graph depicts neonatal mortality rates (per 1,000 live births) for individual countries: Burundi, Democratic Republic of the Congo, Kenya, Rwanda, Somalia, South Sudan, Tanzania, and Uganda.
+
+In both graphs, each country's trajectory is represented by a distinct colored line with circular markers, allowing for the visualization of country-specific changes over time. A thick black line overlaid on the country-specific data represents the regional trend line, providing an overall view of mortality rate changes across the East African Community.
+
+Both under-five and neonatal mortality rates show a general downward trend across the region over the period, indicating progress in child survival. However, the graphs also highlight variations in mortality rates and the pace of decline among the different countries within the community. Notably, there appear to be periods of fluctuation and divergence in the country-specific trajectories, suggesting diverse factors influencing child mortality in each nation. The regional trend line smooths out these individual variations to present a broader picture of improvement in child survival within the East African Community over the decades.
+
+----
+6.HIGHEST MORTALITY COUNTRIES IN EAC
+----
+
+```{r}
+# Identify Highest Mortality Countries 
+highest_mortality <- clean_data %>%
+  filter(Reference.Date == max(Reference.Date)) %>%
+  group_by(Indicator) %>%
+  slice_max(Observation.Value, n = 1) %>%
+  select(Geographic.area, Indicator, Observation.Value)
+
+# Print results
+cat("\nCountries with Highest Mortality Rates:\n")
+print(highest_mortality)
+```
+
+The data reveals critical disparities in child health outcomes across East Africa, with South Sudan reporting a neonatal mortality rate of 40.2 deaths per 1,000 live births—reflecting challenges in maternal and newborn care—while Somalia’s under-five mortality rate soars to 122.7 deaths per 1,000, underscoring the compounded vulnerabilities of conflict, poverty, and limited healthcare access. These figures highlight the urgent need for targeted interventions, particularly in fragile states where systemic barriers perpetuate high child mortality. The stark contrast between neonatal and under-five rates suggests that survival gaps widen significantly in early childhood, demanding prioritized investments in nutrition, immunization, and infectious disease control.
+
