@@ -3,6 +3,7 @@ title: "CEMA-INTERNSHIP DATA SCIENCE"
 author: "Jackson Kahungu"
 date: "2025-04-29"
 output:
+  word_document: default
   html_document: default
 ---
 
@@ -158,8 +159,10 @@ This graph highlights the countries carrying the heaviest HIV burden worldwide, 
 -----
 
 ```{r}
+
+library(cowplot)
 library(dplyr)
-# === 4. Regional 75% contributors per WHO region ===
+# 4. Regional 75% contributors per WHO region
 regional_contribs <- hiv_clean %>%
   group_by(region_code, country) %>%
   summarise(total_est = sum(estimate, na.rm = TRUE), .groups = "drop_last") %>%
@@ -174,7 +177,7 @@ regional_contribs <- hiv_clean %>%
   pull(country)
 
 # Plot by region
-# Modified HIV Regional Trends Plot
+
 plot_region <- hiv_clean %>%
   filter(country %in% regional_contribs) %>%
   ggplot(aes(x = year, y = estimate, color = country)) +
@@ -210,14 +213,13 @@ plot_region <- hiv_clean %>%
   )
 print(plot_region)
 
-ggsave(
-  filename = "HIV Trends for Top 75% Contributors by WHO Region.png",  
-  plot     = plot_region,    
-  width    = 10,             
-  height   = 8,              
-  dpi      = 300             
+cowplot::save_plot(
+  filename = "HIV_top75_by_region.png",
+  plot     = plot_region,
+  base_width  = 10,
+  base_height = 8,
+  dpi         = 300
 )
-
 ```
 
 This image gives us a snapshot of how the number of people living with HIV has trended since the year 2000, broken down by different regions defined by the World Health Organization (WHO). Each of the six smaller graphs focuses on a specific region – AFR (Africa), AMR (Americas), EMR (Eastern Mediterranean), EUR (Europe), SEAR (South-East Asia), and WPR (Western Pacific). Within each regional graph, you see lines representing the countries that contribute to the top 75% of the total number of people living with HIV in that particular region. The y-axis shows the number of people living with HIV, while the x-axis tracks the years. By looking at the slopes of these lines, we can see whether the number of people living with HIV has been increasing, decreasing, or staying relatively stable in these key contributing countries within each WHO region over the past couple of decades.
@@ -345,67 +347,65 @@ The analysis found no clear evidence that poverty levels directly affect HIV rat
 QUESTION 2
 -----
 
-
-1. LOAD AND CLEAN DATA
-
-```{r}
- 
-# Loading poverty data 
-mortality_data <- read.csv(file.choose())  
-
-# Cleaning data
-clean_data <- mortality_data %>%
-  # Standardizing country names
-  mutate(Geographic.area = case_when(
-    grepl("Tanzania", Geographic.area, ignore.case = TRUE) ~ "Tanzania",
-    grepl("DRC|Congo, Dem|Democratic Republic", Geographic.area) ~ "Democratic Republic of the Congo",
-    TRUE ~ Geographic.area
-  )) %>%
-  
-  filter(Geographic.area %in% c(
-    "Burundi", "Democratic Republic of the Congo",
-    "Kenya", "Rwanda", "South Sudan",
-    "Tanzania", "Uganda", "Somalia"
-  )) %>%
-  
-  filter(Observation.Value >= 0)
-```
 ----
-2. LOAD AND PREPARE SHAPEFILES
+1. LOAD AND CLEAN DATA
+----
+```{r}
+# Load data with explicit path
+tmort <- read.csv(file.choose()) 
+
+# Clean data
+clean_data <- tmort %>%
+  mutate(
+    Geographic.area = case_when(
+      grepl("Tanzania", Geographic.area, ignore.case = TRUE) ~ "Tanzania",
+      grepl("DRC|Congo, Dem|Democratic Republic", Geographic.area) ~ "Democratic Republic of the Congo",
+      TRUE ~ Geographic.area
+    )
+  ) %>%
+  filter(
+    Geographic.area %in% c(
+      "Burundi", "Democratic Republic of the Congo",
+      "Kenya", "Rwanda", "South Sudan",
+      "Tanzania", "Uganda", "Somalia"
+    ),
+    Observation.Value >= 0
+  )
+```
+
+----
+ 2. LOAD AND PREPARE SHAPEFILES 
 ----
 ```{r}
 library(sf)
 library(geodata)
+library(ggplot2)
 
-# Downloading country boundaries
+
+shape_dir <- "shapefiles"
+dir.create(shape_dir, showWarnings = FALSE)
+
+# Downloading and saving boundaries
 eac_shapes <- gadm(
   country = c("BDI", "COD", "KEN", "RWA", "SSD", "TZA", "UGA", "SOM"),
   level = 0,
-  path = tempdir()
+  path = shape_dir
 ) %>% 
   st_as_sf() %>%
-  rename(Geographic.area = COUNTRY) 
-###
+  rename(Geographic.area = COUNTRY)
+
+# Ploting and saving
 map_outline <- ggplot(eac_shapes) +
-  geom_sf(fill = NA,       
-          color = "black", 
-          size  = 0.4) +   
-  theme_void()             
+  geom_sf(fill = NA, color = "black", size = 0.4) +   
+  theme_void()
 
-print(map_outline)
-
-# Save to PNG
 ggsave(
   filename = "EAC_shapes_outline.png",
-  plot     = map_outline,
-  width    = 8,    
-  height   = 6,   
-  dpi      = 300
+  plot = map_outline,
+  width = 8,
+  height = 6,
+  dpi = 300
 )
-
-# Check your working directory
-message("Saved to: ", getwd(), "/EAC_shapes_outline.png")
-
 ```
 
 -----
@@ -415,8 +415,6 @@ message("Saved to: ", getwd(), "/EAC_shapes_outline.png")
 
 ```{r}
 
-
-# FINAL WORKING CODE
 library(tmap)
 library(sf)
 library(dplyr)
@@ -600,4 +598,7 @@ print(highest_mortality)
 ```
 
 The data reveals critical disparities in child health outcomes across East Africa, with South Sudan reporting a neonatal mortality rate of 40.2 deaths per 1,000 live births—reflecting challenges in maternal and newborn care—while Somalia’s under-five mortality rate soars to 122.7 deaths per 1,000, underscoring the compounded vulnerabilities of conflict, poverty, and limited healthcare access. These figures highlight the urgent need for targeted interventions, particularly in fragile states where systemic barriers perpetuate high child mortality. The stark contrast between neonatal and under-five rates suggests that survival gaps widen significantly in early childhood, demanding prioritized investments in nutrition, immunization, and infectious disease control.
+
+
+
 
